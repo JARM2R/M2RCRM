@@ -1,0 +1,22 @@
+# Build output
+build/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Database (contains customer data)
+*.db
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# Misc
+nul
+*.log
