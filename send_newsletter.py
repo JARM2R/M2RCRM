@@ -6,10 +6,11 @@ Sends the monthly M2 Reporter newsletter via Resend API.
 Send list:
   - All active accounts (is_retired=0) that have not explicitly unsubscribed
   - Accounts retired/lapsed within the last 12 months (based on paid_through_date)
-  Accounts with no email address are skipped automatically.
+  Accounts with no email address across all three email fields are skipped.
 
-Multi-email fields: if email_ap contains multiple addresses (space-separated),
-a separate email is sent to each address.
+Email fields: email_ap, email_user, and email_it are all combined and
+deduplicated per account.  A separate email is sent to each unique address.
+Fields that are blank or null are silently skipped.
 
 Usage:
     python send_newsletter.py newsletter-2026-07.html
@@ -75,12 +76,15 @@ def get_send_list(db_path: str, audience: str = "all") -> List[Dict]:
           AND (
               (email_ap IS NOT NULL AND email_ap != '')
               OR (email IS NOT NULL AND email != '')
+              OR (email_user IS NOT NULL AND email_user != '')
+              OR (email_it IS NOT NULL AND email_it != '')
           )
     """
     active_sql = f"""
         SELECT
             account_number, company_name, contact_name,
-            email_ap, email, paid_through_date, subscription_status,
+            email_ap, email, email_user, email_it,
+            paid_through_date, subscription_status,
             'active' AS send_status
         FROM customers
         WHERE is_retired = 0
@@ -90,7 +94,8 @@ def get_send_list(db_path: str, audience: str = "all") -> List[Dict]:
     retired_sql = f"""
         SELECT
             account_number, company_name, contact_name,
-            email_ap, email, paid_through_date, subscription_status,
+            email_ap, email, email_user, email_it,
+            paid_through_date, subscription_status,
             'recently_retired' AS send_status
         FROM customers
         WHERE is_retired = 1
@@ -124,6 +129,21 @@ def extract_emails(field_value: str) -> List[str]:
 def get_primary_email_field(record: Dict) -> str:
     """Return the email_ap value, falling back to the legacy email field."""
     return (record.get("email_ap") or record.get("email") or "").strip()
+
+
+def get_all_emails(record: Dict) -> List[str]:
+    """
+    Extract, combine, and deduplicate all valid email addresses from all three
+    email fields (plus the legacy email column).  Blank/null fields are skipped.
+    Deduplication is case-insensitive; first-seen casing is preserved.
+    """
+    seen, seen_lower = [], set()
+    for field in ("email_ap", "email", "email_user", "email_it"):
+        for addr in extract_emails(record.get(field) or ""):
+            if addr.lower() not in seen_lower:
+                seen_lower.add(addr.lower())
+                seen.append(addr)
+    return seen
 
 
 def get_first_name(contact_name: Optional[str], company_name: Optional[str]) -> str:
@@ -303,7 +323,7 @@ def main() -> None:
         print(f"  {'STATUS':<18} {'COMPANY':<32} {'FIRST NAME':<16} EMAIL")
         print(f"  {'-'*18} {'-'*32} {'-'*16} {'-'*35}")
         for r in preview:
-            emails     = extract_emails(get_primary_email_field(r))
+            emails     = get_all_emails(r)
             first      = get_first_name(r.get("contact_name"), r.get("company_name"))
             company    = (r.get("company_name") or "")[:31]
             status_lbl = "active" if r["send_status"] == "active" else "recently retired"
@@ -320,9 +340,7 @@ def main() -> None:
 
     active_in_batch  = sum(1 for r in records if r["send_status"] == "active")
     retired_in_batch = sum(1 for r in records if r["send_status"] == "recently_retired")
-    total_addresses  = sum(
-        len(extract_emails(get_primary_email_field(r))) for r in records
-    )
+    total_addresses  = sum(len(get_all_emails(r)) for r in records)
 
     print(f"\nReady to send:")
     print(f"  Active accounts:            {active_in_batch}")
@@ -346,14 +364,13 @@ def main() -> None:
     skipped   = 0
 
     for i, record in enumerate(records, 1):
-        email_field = get_primary_email_field(record)
-        emails      = extract_emails(email_field)
-        company     = (record.get("company_name") or "")[:35]
-        status_lbl  = "active " if record["send_status"] == "active" else "retired"
+        emails     = get_all_emails(record)
+        company    = (record.get("company_name") or "")[:35]
+        status_lbl = "active " if record["send_status"] == "active" else "retired"
 
         if not emails:
             skipped += 1
-            log_row(log_writer, record, email_field or "(empty)", "skipped", "no valid email address")
+            log_row(log_writer, record, "(all fields empty)", "skipped", "no valid email address")
             print(f"[{i:3}/{len(records)}] [SKIP] [{status_lbl}] {company} — no valid email")
             continue
 

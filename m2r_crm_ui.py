@@ -1921,11 +1921,9 @@ class EmailCampaignDialog(tk.Toplevel):
         active  = sum(1 for r in self._records if r["send_status"] == "active")
         retired = sum(1 for r in self._records if r["send_status"] == "recently_retired")
         multi   = [r for r in self._records
-                   if len(_newsletter_mod.extract_emails(
-                       _newsletter_mod.get_primary_email_field(r))) > 1]
+                   if len(_newsletter_mod.get_all_emails(r)) > 1]
         extra   = sum(
-            len(_newsletter_mod.extract_emails(
-                _newsletter_mod.get_primary_email_field(r))) - 1
+            len(_newsletter_mod.get_all_emails(r)) - 1
             for r in multi
         )
         self.count_active_lbl.config(text=str(active))
@@ -1989,8 +1987,7 @@ class EmailCampaignDialog(tk.Toplevel):
             iid       = str(i)
             company   = r.get("company_name") or ""
             contact   = r.get("contact_name") or ""
-            emails    = _newsletter_mod.extract_emails(
-                _newsletter_mod.get_primary_email_field(r))
+            emails    = _newsletter_mod.get_all_emails(r)
             first     = _newsletter_mod.get_first_name(contact, company)
             email_str = ", ".join(emails) if emails else "(no valid email)"
             if term and term not in f"{company} {contact} {email_str}".lower():
@@ -2145,7 +2142,7 @@ class EmailCampaignDialog(tk.Toplevel):
     def _send_worker(self, records, html_template, subject, api_key, filepath):
         """Background thread: iterate records, call Resend, post UI updates via after()."""
         from send_newsletter import (
-            extract_emails, get_primary_email_field, get_first_name,
+            get_all_emails, get_first_name,
             build_unsubscribe_link, merge_template, send_email,
             open_log_file, log_row,
         )
@@ -2154,14 +2151,13 @@ class EmailCampaignDialog(tk.Toplevel):
         n = len(records)
 
         for i, record in enumerate(records, 1):
-            email_field = get_primary_email_field(record)
-            emails      = extract_emails(email_field)
-            first_name  = get_first_name(
+            emails     = get_all_emails(record)
+            first_name = get_first_name(
                 record.get("contact_name"), record.get("company_name"))
 
             if not emails:
                 log_row(log_writer, record,
-                        email_field or "(empty)", "skipped", "no valid email address")
+                        "(all fields empty)", "skipped", "no valid email address")
                 self.after(0, self._tick_skipped)
             else:
                 company_name = record.get("company_name") or ""
@@ -2275,8 +2271,7 @@ class EmailCampaignDialog(tk.Toplevel):
                 r        = self._records[int(iid)]
                 company  = r.get("company_name") or ""
                 contact  = r.get("contact_name") or ""
-                emails   = _newsletter_mod.extract_emails(
-                    _newsletter_mod.get_primary_email_field(r))
+                emails   = _newsletter_mod.get_all_emails(r)
                 name     = _newsletter_mod.get_first_name(contact, company)
                 email_str = ", ".join(emails) if emails else "(no valid email)"
                 writer.writerow([
