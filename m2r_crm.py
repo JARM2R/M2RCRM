@@ -24,11 +24,12 @@ except ImportError:
 # Add current directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from m2r_crm_paths import ASSET_DIR, ensure_writable_database
+from m2r_crm_paths import ASSET_DIR, ensure_writable_database, backup_database
 ensure_writable_database()
+backup_database(keep=5)
 
 import m2r_crm_database as db
-from m2r_crm_ui import CustomerListPanel, CustomerFormPanel, NotesPanel
+from m2r_crm_ui import CustomerListPanel, CustomerFormPanel, NotesPanel, FollowUpReportWindow, EmailCampaignDialog
 
 
 class M2RCrmApp:
@@ -60,6 +61,9 @@ class M2RCrmApp:
         self.root.bind("<F5>", lambda e: self._refresh())
 
         self._update_status("Ready")
+
+        # Auto-open follow-up report if there are open tasks
+        self.root.after(500, self._check_open_followups)
 
     # M2R Brand Colors
     PRIMARY_BLUE = "#144478"
@@ -146,6 +150,12 @@ class M2RCrmApp:
                             activebackground=self.SELECTION_GREEN, activeforeground="black")
         menubar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="Export Contacts...", command=self._export_contacts)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Generate Invoices...", command=self._generate_invoices)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Send Email Campaign...", command=self._send_newsletter)
+        tools_menu.add_separator()
+        tools_menu.add_command(label="Follow-up Report...", command=self._show_followup_report)
         tools_menu.add_separator()
         tools_menu.add_command(label="Database Statistics", command=self._show_statistics)
 
@@ -328,6 +338,22 @@ class M2RCrmApp:
         self.customer_list.refresh()
         self._update_status("Refreshed")
 
+    def _generate_invoices(self):
+        """Open the bulk invoice generation dialog."""
+        try:
+            from m2r_crm_invoice import BulkInvoiceDialog, REPORTLAB_AVAILABLE
+            if not REPORTLAB_AVAILABLE:
+                messagebox.showerror(
+                    "Missing Package",
+                    "Invoice generation requires the 'reportlab' package.\n"
+                    "Install it with:  pip install reportlab"
+                )
+                return
+            dialog = BulkInvoiceDialog(self.root)
+            self.root.wait_window(dialog)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open invoice dialog:\n{str(e)}")
+
     def _export_contacts(self):
         """Open the export contacts dialog."""
         try:
@@ -336,6 +362,14 @@ class M2RCrmApp:
             self.root.wait_window(dialog)
         except ImportError as e:
             messagebox.showerror("Error", f"Export module not available:\n{str(e)}")
+
+    def _send_newsletter(self):
+        """Open the email campaign dialog."""
+        try:
+            dialog = EmailCampaignDialog(self.root)
+            self.root.wait_window(dialog)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open email campaign dialog:\n{str(e)}")
 
     def _import_from_access(self):
         """Open the import from Access dialog."""
@@ -350,6 +384,15 @@ class M2RCrmApp:
         """Called when import is complete."""
         self.customer_list.refresh()
         self._update_status("Import complete - list refreshed")
+
+    def _check_open_followups(self):
+        """Auto-open the follow-up report on startup if open tasks exist."""
+        if db.get_all_follow_ups('Open'):
+            FollowUpReportWindow(self.root)
+
+    def _show_followup_report(self):
+        """Open the follow-up report window."""
+        FollowUpReportWindow(self.root)
 
     def _show_statistics(self):
         """Show database statistics."""
@@ -413,6 +456,8 @@ class M2RCrmApp:
 
     def _on_exit(self):
         """Handle application exit."""
+        if not self.customer_form.check_unsaved_changes():
+            return  # User cancelled, stay open
         self.root.quit()
 
 

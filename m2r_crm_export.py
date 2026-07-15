@@ -20,8 +20,7 @@ except ImportError:
     OPENPYXL_AVAILABLE = False
 
 try:
-    from tkcalendar import DateEntry
-    CALENDAR_AVAILABLE = True
+    from m2r_crm_ui import DateEntry, CALENDAR_AVAILABLE
 except ImportError:
     CALENDAR_AVAILABLE = False
 
@@ -74,12 +73,12 @@ def format_contact_for_export(customer: Dict) -> Dict:
     status = customer.get('subscription_status', 'NO')
     email_status = "Subscribed" if status == 'YES' else "Unsubscribed"
 
-    # Format paid through date
+    # Format paid through date as mm/dd/yyyy
     paid_through = customer.get('paid_through_date', '')
     if paid_through:
         try:
             if isinstance(paid_through, str):
-                paid_through_formatted = paid_through
+                paid_through_formatted = datetime.fromisoformat(paid_through).strftime('%m/%d/%Y')
             else:
                 paid_through_formatted = paid_through.strftime('%m/%d/%Y')
         except:

@@ -28,6 +28,15 @@ hidden = [
     'babel.numbers',
     'babel.dates',
     'tkcalendar',
+    'm2r_crm_invoice',
+    'reportlab',
+    'reportlab.pdfgen',
+    'reportlab.pdfgen.canvas',
+    'reportlab.lib.pagesizes',
+    'reportlab.lib.units',
+    'reportlab.lib.colors',
+    'reportlab.lib.styles',
+    'reportlab.platypus',
 ]
 
 # ── Analysis for each entry point ───────────────────────────────────

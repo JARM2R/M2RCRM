@@ -100,6 +100,12 @@ def init_database():
         except sqlite3.OperationalError:
             pass
 
+    # Migrate: add past_due_invoice flag if it doesn't exist
+    try:
+        cursor.execute("ALTER TABLE customers ADD COLUMN past_due_invoice INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
     # Migrate existing bureau_id data to bureau_equifax if bureau_equifax is empty
     cursor.execute("""
         UPDATE customers SET bureau_equifax = bureau_id
@@ -114,6 +120,20 @@ def init_database():
             customer_id INTEGER NOT NULL,
             note_text TEXT,
             note_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+        )
+    """)
+
+    # Create follow_ups table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS follow_ups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id INTEGER NOT NULL,
+            note_text TEXT NOT NULL,
+            created_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            due_date DATE,
+            status TEXT DEFAULT 'Open',
+            completed_date DATETIME,
             FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
         )
     """)
@@ -141,6 +161,8 @@ def init_database():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_customers_retired ON customers(is_retired)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_customer ON notes(customer_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_followups_customer ON follow_ups(customer_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_followups_status ON follow_ups(status)")
 
     conn.commit()
     conn.close()
@@ -657,6 +679,111 @@ def get_highest_account_number() -> Optional[int]:
         except ValueError:
             return None
     return None
+
+
+# Follow-up operations
+
+def create_follow_up(customer_id: int, note_text: str, due_date: Optional[str] = None) -> int:
+    """Create a new follow-up for a customer. Returns the follow-up ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO follow_ups (customer_id, note_text, due_date, created_date) VALUES (?, ?, ?, ?)",
+        (customer_id, note_text, due_date, datetime.now().isoformat())
+    )
+    fup_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return fup_id
+
+
+def get_follow_ups(customer_id: int) -> List[Dict[str, Any]]:
+    """Get all follow-ups for a specific customer, newest first."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM follow_ups WHERE customer_id = ? ORDER BY created_date DESC",
+        (customer_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_all_follow_ups(status_filter: str = 'Open') -> List[Dict[str, Any]]:
+    """Get all follow-ups joined with customer info for the report."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT f.id, f.customer_id, f.note_text, f.created_date, f.due_date,
+               f.status, f.completed_date,
+               c.account_number, c.company_name, c.contact_name
+        FROM follow_ups f
+        JOIN customers c ON f.customer_id = c.id
+    """
+    if status_filter == 'Open':
+        query += " WHERE f.status = 'Open'"
+    elif status_filter == 'Complete':
+        query += " WHERE f.status = 'Complete'"
+    query += " ORDER BY f.due_date ASC NULLS LAST, f.created_date ASC"
+    cursor.execute(query)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def update_follow_up_status(follow_up_id: int, status: str) -> bool:
+    """Update the status of a follow-up. Sets completed_date when marking Complete."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    completed_date = datetime.now().isoformat() if status == 'Complete' else None
+    cursor.execute(
+        "UPDATE follow_ups SET status = ?, completed_date = ? WHERE id = ?",
+        (status, completed_date, follow_up_id)
+    )
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success
+
+
+def delete_follow_up(follow_up_id: int) -> bool:
+    """Delete a follow-up."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM follow_ups WHERE id = ?", (follow_up_id,))
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success
+
+
+def get_past_due_invoice_customers() -> List[Dict[str, Any]]:
+    """Return all active customers with Past Due Invoice checked, ordered by company name."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM customers
+        WHERE past_due_invoice = 1 AND is_retired = 0
+        ORDER BY company_name
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_support_invoice_customers() -> List[Dict[str, Any]]:
+    """Return all active customers with Support Invoice checked, ordered by company name."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM customers
+        WHERE support_invoice = 1 AND is_retired = 0
+        ORDER BY company_name
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 
 # Initialize database on module import
